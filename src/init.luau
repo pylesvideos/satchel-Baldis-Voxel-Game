@@ -1,9 +1,18 @@
 --!nolint DeprecatedApi
 
 --[[
-	This Source Code Form is subject to the terms of the Mozilla Public
-	License, v. 2.0. If a copy of the MPL was not distributed with this
-	file, You can obtain one at http://mozilla.org/MPL/2.0/.
+	Name: Satchel with Tabs, for Baldi's Voxel Game
+	Version: 1.3.1
+	Description: Satchel is a modern open-source alternative to Roblox's default backpack. Satchel aims to be more customizable and easier to use than the default backpack while still having a "vanilla" feel.
+	By: @WinnersTakesAll on Roblox, @pylesvideos on Roblox, & @RyanLua on GitHub
+
+	Acknowledgements (@Roblox):
+		@OnlyTwentyCharacters, @SolarCrane -- For creating the CoreGui script
+		@thebrickplanetboy -- For allowing me to republish his fork of the backpack system.
+		@ForeverHD -- Making Topbar Plus and open-sourcing it for everyone to use
+		@pylesvideos -- Adding Tabs to the Inventory
+
+	OG DevForum: https://devforum.roblox.com/t/2451549
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -15,6 +24,13 @@ local RunService = game:GetService("RunService")
 local VRService = game:GetService("VRService")
 local Players = game:GetService("Players")
 local PlayerGui: Instance = Players.LocalPlayer:WaitForChild("PlayerGui")
+local CollectionService = game:GetService("CollectionService")
+
+-- Category state
+local DEFAULT_CATEGORY = "All"
+local Categories = { DEFAULT_CATEGORY } -- will grow dynamically as tools are seen
+local CurrentCategory = DEFAULT_CATEGORY
+local CategoryFrame = nil -- UI container for category buttons
 
 local BackpackScript = {}
 
@@ -37,8 +53,6 @@ BackpackScript.BackpackItemRemoved = Instance.new("BindableEvent") :: BindableEv
 BackpackScript.BackpackItemRemoved.Name = "BackpackRemoved"
 
 local targetScript: ModuleScript = script
-
-require(script.Attribution)
 
 -- Constants --
 local PREFERRED_TRANSPARENCY: number = GuiService.PreferredTransparency or 1
@@ -71,8 +85,8 @@ local TOOLTIP_HEIGHT: number = 16
 local TOOLTIP_OFFSET: number = -5 -- From to
 
 -- Topbar icons
-local ARROW_IMAGE_OPEN: string = "rbxasset://textures/ui/TopBar/inventoryOn.png"
-local ARROW_IMAGE_CLOSE: string = "rbxasset://textures/ui/TopBar/inventoryOff.png"
+local ARROW_IMAGE_OPEN: string = "rbxassetid://121605390914610"
+local ARROW_IMAGE_CLOSE: string = "rbxassetid://82022311148739"
 -- local ARROW_HOTKEY: { Enum.KeyCode } = { Enum.KeyCode.Backquote, Enum.KeyCode.DPadUp } --TODO: Hookup '~' too?
 
 -- Hotbar slots
@@ -109,7 +123,7 @@ local SEARCH_WIDTH_PIXELS: number = 200
 
 -- Misc
 local FONT_FAMILY: Font = targetScript:GetAttribute("FontFace")
-	or Font.new("rbxasset://fonts/families/BuilderSans.json")
+	or Font.new("rbxasset://fonts/families/ComicNeueAngular.json")
 local FONT_SIZE: number = targetScript:GetAttribute("TextSize") or 16
 local DROP_HOTKEY_VALUE: number = Enum.KeyCode.Backspace.Value
 local ZERO_KEY_VALUE: number = Enum.KeyCode.Zero.Value
@@ -141,7 +155,7 @@ local GAMEPAD_INPUT_TYPES: { [Enum.UserInputType]: boolean } =
 -- Topbar logic
 local BackpackEnabled: boolean = true
 
-local Icon: any = require(script.Parent.topbarplus)
+local Icon: any = require(game.ReplicatedStorage.TopbarPlus:WaitForChild("Icon"))
 
 local inventoryIcon: any = Icon.new()
 	:setName("Inventory")
@@ -152,6 +166,7 @@ local inventoryIcon: any = Icon.new()
 	:bindToggleKey(Enum.KeyCode.Backquote)
 	:autoDeselect(false)
 	:setOrder(-1)
+	:align("Right")
 
 inventoryIcon.toggled:Connect(function(): ()
 	if not GuiService.MenuIsOpen then
@@ -273,7 +288,7 @@ local function UpdateScrollingFrameCanvasSize(): ()
 	local countX: number = math.floor(ScrollingFrame.AbsoluteSize.X / (ICON_SIZE_PIXELS + ICON_BUFFER_PIXELS))
 	local maxRow: number = math.ceil((#UIGridFrame:GetChildren() - 1) / countX)
 	local canvasSizeY: number = maxRow * (ICON_SIZE_PIXELS + ICON_BUFFER_PIXELS) + ICON_BUFFER_PIXELS
-	ScrollingFrame.CanvasSize = UDim2.fromOffset(0, canvasSizeY)
+	ScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, canvasSizeY)
 end
 
 local function AdjustInventoryFrames(): ()
@@ -314,9 +329,124 @@ local function UpdateBackpackLayout(): ()
 		1,
 		-INVENTORY_HEADER_SIZE - (IsVR and 2 * INVENTORY_ARROWS_BUFFER_VR or 0)
 	)
-	ScrollingFrame.Position = UDim2.fromOffset(0, INVENTORY_HEADER_SIZE + (IsVR and INVENTORY_ARROWS_BUFFER_VR or 0))
+	ScrollingFrame.Position = UDim2.new(0, 0, 0, INVENTORY_HEADER_SIZE + (IsVR and INVENTORY_ARROWS_BUFFER_VR or 0))
 	AdjustHotbarFrames()
 	AdjustInventoryFrames()
+end
+
+-- Category helpers
+
+-- Determine a category for a given tool
+local function DetermineToolCategory(tool: Instance): string
+	-- preference: explicit Attribute "Category"
+	if tool.GetAttribute and tool:GetAttribute("Category") then
+		return tostring(tool:GetAttribute("Category"))
+	end
+
+	-- fallback: check tags and use the first tag
+	local tags = CollectionService:GetTags(tool)
+	if tags and #tags > 0 then
+		return tostring(tags[1])
+	end
+
+	-- final fallback
+	return "Misc"
+end
+
+-- Register a category name in the Categories table (keeps it unique)
+local function RegisterCategory(cat: string)
+	if not cat or cat == "" then
+		return
+	end
+	for _, c in ipairs(Categories) do
+		if c == cat then
+			return
+		end
+	end
+	table.insert(Categories, cat)
+end
+
+-- Update visibility for a single slot according to CurrentCategory
+local function ApplyCategoryToSlot(slot)
+	if not slot or not slot.Frame then
+		return
+	end
+	-- If showing "All", leave existing visibility logic in place (slot visible if it has a tool)
+	if CurrentCategory == DEFAULT_CATEGORY then
+		slot.Frame.Visible = (slot.Tool ~= nil)
+		return
+	end
+
+	-- Optionally always show hotbar slots even when filtered:
+	local isHotbar = slot.Index and slot.Index <= NumberOfHotbarSlots
+	-- Change this to `false` if you want hotbar slots to be filtered too
+	if isHotbar then
+		slot.Frame.Visible = (slot.Tool ~= nil)
+		return
+	end
+
+	local cat = slot.Category or "Misc"
+	slot.Frame.Visible = (slot.Tool ~= nil and cat == CurrentCategory)
+end
+
+-- Set the active category and refresh slots
+local function SetCategory(cat: string)
+	if not cat then return end
+	CurrentCategory = cat
+
+	-- Update button visuals if CategoryFrame exists
+	if CategoryFrame then
+		for _, child in ipairs(CategoryFrame:GetChildren()) do
+			if child:IsA("TextButton") then
+				child.BackgroundTransparency = (child.Text == cat) and 0 or 0.6
+			end
+		end
+	end
+
+	for i = 1, #Slots do
+		local s = Slots[i]
+		if s then
+			ApplyCategoryToSlot(s)
+		end
+	end
+end
+
+-- Build the category UI bar (call with BuildCategoryBar(InventoryFrame) once InventoryFrame exists)
+local function BuildCategoryBar(parentFrame)
+	if CategoryFrame then
+		CategoryFrame:Destroy()
+		CategoryFrame = nil
+	end
+
+	CategoryFrame = Instance.new("Frame")
+	CategoryFrame.Name = "CategoryBar"
+	CategoryFrame.Size = UDim2.new(1, 0, 0, 32)
+	CategoryFrame.BackgroundTransparency = 1
+	CategoryFrame.Parent = parentFrame
+	CategoryFrame.Position = UDim2.new(0, 0, 0, 4) -- tweak as needed
+
+	local padding = 6
+	local xOffset = padding
+
+	for _, cat in ipairs(Categories) do
+		local btn = Instance.new("TextButton")
+		btn.Name = "Category_" .. cat:gsub("%s+", "_")
+		btn.AutoButtonColor = true
+		btn.BackgroundTransparency = (cat == CurrentCategory) and 0 or 0.6
+		btn.BackgroundColor3 = BACKGROUND_COLOR
+		btn.Position = UDim2.fromOffset(xOffset, 4)
+		btn.Size = UDim2.fromOffset(100, 24)
+		btn.Text = cat
+		btn.Font = Enum.Font.SourceSans
+		btn.TextSize = 14
+		btn.Parent = CategoryFrame
+
+		btn.MouseButton1Click:Connect(function()
+			SetCategory(cat)
+		end)
+
+		xOffset = xOffset + btn.Size.X.Offset + padding
+	end
 end
 
 local function Clamp(low: number, high: number, num: number): number
@@ -397,7 +527,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		local midpointish: number = (visualTotal / 2) + 0.5
 		local factor: number = visualIndex - midpointish
 		SlotFrame.Position =
-			UDim2.fromOffset(centered - (ICON_SIZE_PIXELS / 2) + (sizePlus * factor), ICON_BUFFER_PIXELS)
+			UDim2.new(0, centered - (ICON_SIZE_PIXELS / 2) + (sizePlus * factor), 0, ICON_BUFFER_PIXELS)
 	end
 
 	-- Fill the slot with a tool
@@ -426,7 +556,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			-- If there is a tooltip, then show it
 			if ToolTip and tool:IsA("Tool") then --NOTE: HopperBin
 				ToolTip.Text = tool.ToolTip
-				ToolTip.Size = UDim2.fromOffset(0, TOOLTIP_HEIGHT)
+				ToolTip.Size = UDim2.new(0, 0, 0, TOOLTIP_HEIGHT)
 				ToolTip.Position = UDim2.new(0.5, 0, 0, TOOLTIP_OFFSET)
 			end
 		end
@@ -627,7 +757,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	SlotFrame.BorderColor3 = SLOT_BORDER_COLOR
 	SlotFrame.Text = ""
 	SlotFrame.BorderSizePixel = 0
-	SlotFrame.Size = UDim2.fromOffset(ICON_SIZE_PIXELS, ICON_SIZE_PIXELS)
+	SlotFrame.Size = UDim2.new(0, ICON_SIZE_PIXELS, 0, ICON_SIZE_PIXELS)
 	SlotFrame.Active = true
 	SlotFrame.Draggable = false
 	SlotFrame.BackgroundTransparency = SLOT_LOCKED_TRANSPARENCY
@@ -650,7 +780,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		SelectionObj = Instance.new("ImageLabel")
 		SelectionObj.Name = "Selector"
 		SelectionObj.BackgroundTransparency = 1
-		SelectionObj.Size = UDim2.fromScale(1, 1)
+		SelectionObj.Size = UDim2.new(1, 0, 1, 0)
 		SelectionObj.Image = "rbxasset://textures/ui/Keyboard/key_selection_9slice.png"
 		SelectionObj.ScaleType = Enum.ScaleType.Slice
 		SelectionObj.SliceCenter = Rect.new(12, 12, 52, 52)
@@ -660,13 +790,13 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	ToolIcon = Instance.new("ImageLabel")
 	ToolIcon.BackgroundTransparency = 1
 	ToolIcon.Name = "Icon"
-	ToolIcon.Size = UDim2.fromScale(1, 1)
-	ToolIcon.Position = UDim2.fromScale(0.5, 0.5)
+	ToolIcon.Size = UDim2.new(1, 0, 1, 0)
+	ToolIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
 	ToolIcon.AnchorPoint = Vector2.new(0.5, 0.5)
 	if LEGACY_PADDING_ENABLED == true then
 		ToolIcon.Size = UDim2.new(1, -SLOT_EQUIP_THICKNESS * 2, 1, -SLOT_EQUIP_THICKNESS * 2)
 	else
-		ToolIcon.Size = UDim2.fromScale(1, 1)
+		ToolIcon.Size = UDim2.new(1, 0, 1, 0)
 	end
 	ToolIcon.Parent = SlotFrame
 
@@ -689,7 +819,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	ToolName.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Medium, Enum.FontStyle.Normal)
 	ToolName.TextSize = FONT_SIZE
 	ToolName.Size = UDim2.new(1, -SLOT_EQUIP_THICKNESS * 2, 1, -SLOT_EQUIP_THICKNESS * 2)
-	ToolName.Position = UDim2.fromScale(0.5, 0.5)
+	ToolName.Position = UDim2.new(0.5, 0, 0.5, 0)
 	ToolName.AnchorPoint = Vector2.new(0.5, 0.5)
 	ToolName.TextWrapped = true
 	ToolName.TextTruncate = Enum.TextTruncate.AtEnd
@@ -702,7 +832,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		ToolTip = Instance.new("TextLabel")
 		ToolTip.Name = "ToolTip"
 		ToolTip.Text = ""
-		ToolTip.Size = UDim2.fromScale(1, 1)
+		ToolTip.Size = UDim2.new(1, 0, 1, 0)
 		ToolTip.TextColor3 = TEXT_COLOR
 		ToolTip.TextStrokeTransparency = TEXT_STROKE_TRANSPARENCY
 		ToolTip.TextStrokeColor3 = TEXT_STROKE_COLOR
@@ -768,7 +898,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			SlotNumber.TextSize = FONT_SIZE
 			SlotNumber.Text = tostring(slotNum)
 			SlotNumber.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
-			SlotNumber.Size = UDim2.fromScale(0.4, 0.4)
+			SlotNumber.Size = UDim2.new(0.4, 0, 0.4, 0)
 			SlotNumber.Visible = false
 			SlotNumber.Parent = SlotFrame
 			HotkeyFns[ZERO_KEY_VALUE + slotNum] = slot.Select
@@ -986,6 +1116,23 @@ local function OnChildAdded(child: Instance): () -- To Character or Backpack
 	else -- New! Put into lowest hotbar slot or new inventory slot
 		slot = LowestEmptySlot or MakeSlot(UIGridFrame)
 		slot:Fill(tool)
+		-- After slot:Fill(tool) -> assign category & register UI
+		slot.Category = DetermineToolCategory(tool)
+		RegisterCategory(slot.Category)
+
+		-- If category bar isn't built yet but InventoryFrame exists, build it lazily
+		if not CategoryFrame and InventoryFrame then
+			BuildCategoryBar(InventoryFrame)
+		end
+
+		-- If new category was added, we should rebuild the bar to include it (simple approach)
+		-- (build only if CategoryFrame exists so we don't create it prematurely)
+		if CategoryFrame then
+			BuildCategoryBar(InventoryFrame)
+		end
+
+		-- Apply the currently selected category so visibility respects filter immediately
+		ApplyCategoryToSlot(slot)
 		if slot.Index <= NumberOfHotbarSlots and not InventoryFrame.Visible then
 			AdjustHotbarFrames()
 		end
@@ -997,7 +1144,7 @@ local function OnChildAdded(child: Instance): () -- To Character or Backpack
 		end
 	end
 
-	BackpackScript.BackpackItemAdded:Fire(slot)
+	BackpackScript.BackpackItemAdded:Fire()
 end
 
 local function OnChildRemoved(child: Instance): () -- From Character or Backpack
@@ -1028,9 +1175,7 @@ local function OnChildRemoved(child: Instance): () -- From Character or Backpack
 		ActiveHopper = nil :: any
 	end
 
-	if slot then
-		BackpackScript.BackpackItemRemoved:Fire(slot)
-	end
+	BackpackScript.BackpackItemRemoved:Fire()
 	if isInventoryEmpty() then
 		BackpackScript.BackpackEmpty:Fire()
 	end
@@ -1230,12 +1375,12 @@ changeToolFunc = function(actionName: string, inputState: Enum.UserInputState, i
 		if
 			(
 				lastChangeToolInputObject.KeyCode == Enum.KeyCode.ButtonR1
-				and inputObject.KeyCode == Enum.KeyCode.ButtonL1
+					and inputObject.KeyCode == Enum.KeyCode.ButtonL1
 			)
-			or (
-				lastChangeToolInputObject.KeyCode == Enum.KeyCode.ButtonL1
-				and inputObject.KeyCode == Enum.KeyCode.ButtonR1
-			)
+				or (
+					lastChangeToolInputObject.KeyCode == Enum.KeyCode.ButtonL1
+					and inputObject.KeyCode == Enum.KeyCode.ButtonR1
+				)
 		then
 			if (os.clock() - lastChangeToolInputTime) <= maxEquipDeltaTime then
 				UnequipAllTools()
@@ -1356,8 +1501,8 @@ function changeSlot(slot: any): ()
 			local startSize: UDim2 = slot.Frame.Size
 			local startPosition: UDim2 = slot.Frame.Position
 			slot.Frame:TweenSizeAndPosition(
-				startSize + UDim2.fromOffset(10, 10),
-				startPosition - UDim2.fromOffset(5, 5),
+				startSize + UDim2.new(0, 10, 0, 10),
+				startPosition - UDim2.new(0, 5, 0, 5),
 				Enum.EasingDirection.Out,
 				Enum.EasingStyle.Quad,
 				0.1,
@@ -1483,14 +1628,6 @@ end
 
 local function OnIconChanged(enabled: boolean): ()
 	-- Check for enabling/disabling the whole thing
-	local success, _topbarEnabled = pcall(function()
-		return enabled and StarterGui:GetCore("TopbarEnabled")
-	end)
-
-	if not success then
-		return
-	end
-
 	WholeThingEnabled = enabled
 	MainFrame.Visible = enabled
 
@@ -1516,22 +1653,22 @@ local function MakeVRRoundButton(name: string, image: string): (ImageButton, Ima
 	local newButton: ImageButton = Instance.new("ImageButton")
 	newButton.BackgroundTransparency = 1
 	newButton.Name = name
-	newButton.Size = UDim2.fromOffset(40, 40)
+	newButton.Size = UDim2.new(0, 40, 0, 40)
 	newButton.Image = "rbxasset://textures/ui/Keyboard/close_button_background.png"
 
 	local buttonIcon: ImageLabel = Instance.new("ImageLabel")
 	buttonIcon.Name = "Icon"
 	buttonIcon.BackgroundTransparency = 1
-	buttonIcon.Size = UDim2.fromScale(0.5, 0.5)
-	buttonIcon.Position = UDim2.fromScale(0.25, 0.25)
+	buttonIcon.Size = UDim2.new(0.5, 0, 0.5, 0)
+	buttonIcon.Position = UDim2.new(0.25, 0, 0.25, 0)
 	buttonIcon.Image = image
 	buttonIcon.Parent = newButton
 
 	local buttonSelectionObject: ImageLabel = Instance.new("ImageLabel")
 	buttonSelectionObject.BackgroundTransparency = 1
 	buttonSelectionObject.Name = "Selection"
-	buttonSelectionObject.Size = UDim2.fromScale(0.9, 0.9)
-	buttonSelectionObject.Position = UDim2.fromScale(0.05, 0.05)
+	buttonSelectionObject.Size = UDim2.new(0.9, 0, 0.9, 0)
+	buttonSelectionObject.Position = UDim2.new(0.05, 0, 0.05, 0)
 	buttonSelectionObject.Image = "rbxasset://textures/ui/Keyboard/close_button_selection.png"
 	newButton.SelectionImageObject = buttonSelectionObject
 
@@ -1542,7 +1679,7 @@ end
 MainFrame = Instance.new("Frame")
 MainFrame.BackgroundTransparency = 1
 MainFrame.Name = "Backpack"
-MainFrame.Size = UDim2.fromScale(1, 1)
+MainFrame.Size = UDim2.new(1, 0, 1, 0)
 MainFrame.Visible = false
 MainFrame.Parent = BackpackGui
 
@@ -1550,7 +1687,7 @@ MainFrame.Parent = BackpackGui
 HotbarFrame = Instance.new("Frame")
 HotbarFrame.BackgroundTransparency = 1
 HotbarFrame.Name = "Hotbar"
-HotbarFrame.Size = UDim2.fromScale(1, 1)
+HotbarFrame.Size = UDim2.new(1, 0, 1, 0)
 HotbarFrame.Parent = MainFrame
 
 -- Make all the Hotbar Slots
@@ -1566,19 +1703,19 @@ end
 local LeftBumperButton: ImageLabel = Instance.new("ImageLabel")
 LeftBumperButton.BackgroundTransparency = 1
 LeftBumperButton.Name = "LeftBumper"
-LeftBumperButton.Size = UDim2.fromOffset(40, 40)
+LeftBumperButton.Size = UDim2.new(0, 40, 0, 40)
 LeftBumperButton.Position = UDim2.new(0, -LeftBumperButton.Size.X.Offset, 0.5, -LeftBumperButton.Size.Y.Offset / 2)
 
 local RightBumperButton: ImageLabel = Instance.new("ImageLabel")
 RightBumperButton.BackgroundTransparency = 1
 RightBumperButton.Name = "RightBumper"
-RightBumperButton.Size = UDim2.fromOffset(40, 40)
+RightBumperButton.Size = UDim2.new(0, 40, 0, 40)
 RightBumperButton.Position = UDim2.new(1, 0, 0.5, -RightBumperButton.Size.Y.Offset / 2)
 
 -- Make the Inventory, which holds the ScrollingFrame, the header, and the search box
 InventoryFrame = Instance.new("Frame")
 InventoryFrame.Name = "Inventory"
-InventoryFrame.Size = UDim2.fromScale(1, 1)
+InventoryFrame.Size = UDim2.new(1, 0, 1, 0)
 InventoryFrame.BackgroundTransparency = BACKGROUND_TRANSPARENCY
 InventoryFrame.BackgroundColor3 = BACKGROUND_COLOR
 InventoryFrame.Active = true
@@ -1594,7 +1731,7 @@ corner.Parent = InventoryFrame
 VRInventorySelector = Instance.new("TextButton")
 VRInventorySelector.Name = "VRInventorySelector"
 VRInventorySelector.Position = UDim2.new(0, 0, 0, 0)
-VRInventorySelector.Size = UDim2.fromScale(1, 1)
+VRInventorySelector.Size = UDim2.new(1, 0, 1, 0)
 VRInventorySelector.BackgroundTransparency = 1
 VRInventorySelector.Text = ""
 VRInventorySelector.Parent = InventoryFrame
@@ -1602,7 +1739,7 @@ VRInventorySelector.Parent = InventoryFrame
 local selectorImage: ImageLabel = Instance.new("ImageLabel")
 selectorImage.BackgroundTransparency = 1
 selectorImage.Name = "Selector"
-selectorImage.Size = UDim2.fromScale(1, 1)
+selectorImage.Size = UDim2.new(1, 0, 1, 0)
 selectorImage.Image = "rbxasset://textures/ui/Keyboard/key_selection_9slice.png"
 selectorImage.ScaleType = Enum.ScaleType.Slice
 selectorImage.SliceCenter = Rect.new(12, 12, 52, 52)
@@ -1617,7 +1754,7 @@ end)
 ScrollingFrame = Instance.new("ScrollingFrame")
 ScrollingFrame.BackgroundTransparency = 1
 ScrollingFrame.Name = "ScrollingFrame"
-ScrollingFrame.Size = UDim2.fromScale(1, 1)
+ScrollingFrame.Size = UDim2.new(1, 0, 1, 0)
 ScrollingFrame.Selectable = false
 ScrollingFrame.ScrollingDirection = Enum.ScrollingDirection.Y
 ScrollingFrame.BorderSizePixel = 0
@@ -1632,20 +1769,20 @@ UIGridFrame.BackgroundTransparency = 1
 UIGridFrame.Name = "UIGridFrame"
 UIGridFrame.Selectable = false
 UIGridFrame.Size = UDim2.new(1, -(ICON_BUFFER_PIXELS * 2), 1, 0)
-UIGridFrame.Position = UDim2.fromOffset(ICON_BUFFER_PIXELS, 0)
+UIGridFrame.Position = UDim2.new(0, ICON_BUFFER_PIXELS, 0, 0)
 UIGridFrame.Parent = ScrollingFrame
 
 UIGridLayout = Instance.new("UIGridLayout")
 UIGridLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIGridLayout.CellSize = UDim2.fromOffset(ICON_SIZE_PIXELS, ICON_SIZE_PIXELS)
-UIGridLayout.CellPadding = UDim2.fromOffset(ICON_BUFFER_PIXELS, ICON_BUFFER_PIXELS)
+UIGridLayout.CellSize = UDim2.new(0, ICON_SIZE_PIXELS, 0, ICON_SIZE_PIXELS)
+UIGridLayout.CellPadding = UDim2.new(0, ICON_BUFFER_PIXELS, 0, ICON_BUFFER_PIXELS)
 UIGridLayout.Parent = UIGridFrame
 
 ScrollUpInventoryButton = MakeVRRoundButton("ScrollUpButton", "rbxasset://textures/ui/Backpack/ScrollUpArrow.png")
-ScrollUpInventoryButton.Size = UDim2.fromOffset(34, 34)
+ScrollUpInventoryButton.Size = UDim2.new(0, 34, 0, 34)
 ScrollUpInventoryButton.Position =
 	UDim2.new(0.5, -ScrollUpInventoryButton.Size.X.Offset / 2, 0, INVENTORY_HEADER_SIZE + 3)
-ScrollUpInventoryButton.Icon.Position = ScrollUpInventoryButton.Icon.Position - UDim2.fromOffset(0, 2)
+ScrollUpInventoryButton.Icon.Position = ScrollUpInventoryButton.Icon.Position - UDim2.new(0, 0, 0, 2)
 ScrollUpInventoryButton.MouseButton1Click:Connect(function(): ()
 	ScrollingFrame.CanvasPosition = Vector2.new(
 		ScrollingFrame.CanvasPosition.X,
@@ -1659,8 +1796,8 @@ end)
 
 ScrollDownInventoryButton = MakeVRRoundButton("ScrollDownButton", "rbxasset://textures/ui/Backpack/ScrollUpArrow.png")
 ScrollDownInventoryButton.Rotation = 180
-ScrollDownInventoryButton.Icon.Position = ScrollDownInventoryButton.Icon.Position - UDim2.fromOffset(0, 2)
-ScrollDownInventoryButton.Size = UDim2.fromOffset(34, 34)
+ScrollDownInventoryButton.Icon.Position = ScrollDownInventoryButton.Icon.Position - UDim2.new(0, 0, 0, 2)
+ScrollDownInventoryButton.Size = UDim2.new(0, 34, 0, 34)
 ScrollDownInventoryButton.Position =
 	UDim2.new(0.5, -ScrollDownInventoryButton.Size.X.Offset / 2, 1, -ScrollDownInventoryButton.Size.Y.Offset - 3)
 ScrollDownInventoryButton.MouseButton1Click:Connect(function(): ()
@@ -1691,7 +1828,7 @@ UpdateBackpackLayout()
 --Make the gamepad hint frame
 local gamepadHintsFrame: Frame = Instance.new("Frame")
 gamepadHintsFrame.Name = "GamepadHintsFrame"
-gamepadHintsFrame.Size = UDim2.fromOffset(HotbarFrame.Size.X.Offset, (IsTenFootInterface and 95 or 60))
+gamepadHintsFrame.Size = UDim2.new(0, HotbarFrame.Size.X.Offset, 0, (IsTenFootInterface and 95 or 60))
 gamepadHintsFrame.BackgroundTransparency = BACKGROUND_TRANSPARENCY
 gamepadHintsFrame.BackgroundColor3 = BACKGROUND_COLOR
 gamepadHintsFrame.Visible = false
@@ -1727,7 +1864,7 @@ local function addGamepadHint(hintImageString: string, hintTextString: string): 
 
 	local hintImage: ImageLabel = Instance.new("ImageLabel")
 	hintImage.Name = "HintImage"
-	hintImage.Size = (IsTenFootInterface and UDim2.fromOffset(60, 60) or UDim2.fromOffset(30, 30))
+	hintImage.Size = (IsTenFootInterface and UDim2.new(0, 60, 0, 60) or UDim2.new(0, 30, 0, 30))
 	hintImage.BackgroundTransparency = 1
 	hintImage.Image = hintImageString
 	hintImage.Parent = hintFrame
@@ -1793,14 +1930,14 @@ local function resizeGamepadHintsFrame(): ()
 	for i: number = 1, #filteredGamepadHints do
 		filteredGamepadHints[i].Position = (
 			i == 1 and UDim2.new(0, 0, 0, 0)
-			or UDim2.new(
-				0,
-				filteredGamepadHints[i - 1].Position.X.Offset
+				or UDim2.new(
+					0,
+					filteredGamepadHints[i - 1].Position.X.Offset
 					+ filteredGamepadHints[i - 1].Size.X.Offset
 					+ spaceBetweenElements,
-				0,
-				0
-			)
+					0,
+					0
+				)
 		)
 		filteredGamepadHints[i].Size = UDim2.new(
 			0,
@@ -1868,7 +2005,7 @@ do -- Search stuff
 	local xButton: TextButton = Instance.new("TextButton")
 	xButton.Name = "X"
 	xButton.Text = ""
-	xButton.Size = UDim2.fromOffset(30, 30)
+	xButton.Size = UDim2.new(0, 30, 0, 30)
 	xButton.Position = UDim2.new(1, -xButton.Size.X.Offset, 0.5, -xButton.Size.Y.Offset / 2)
 	xButton.ZIndex = 4
 	xButton.Visible = false
@@ -1886,7 +2023,7 @@ do -- Search stuff
 		searchFrame.Size.Y.Offset - (SEARCH_BUFFER_PIXELS * 4)
 	)
 	xImage.AnchorPoint = Vector2.new(0.5, 0.5)
-	xImage.Position = UDim2.fromScale(0.5, 0.5)
+	xImage.Position = UDim2.new(0.5, 0, 0.5, 0)
 	xImage.ZIndex = 1
 	xImage.BorderSizePixel = 0
 	xImage.Parent = xButton
