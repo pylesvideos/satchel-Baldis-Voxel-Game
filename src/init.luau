@@ -85,8 +85,8 @@ local TOOLTIP_HEIGHT: number = 16
 local TOOLTIP_OFFSET: number = -5 -- From to
 
 -- Topbar icons
-local ARROW_IMAGE_OPEN: string = "rbxassetid://121605390914610"
-local ARROW_IMAGE_CLOSE: string = "rbxassetid://82022311148739"
+local ARROW_IMAGE_OPEN: string = "rbxasset://textures/ui/TopBar/inventoryOn.png"
+local ARROW_IMAGE_CLOSE: string = "rbxasset://textures/ui/TopBar/inventoryOff.png"
 -- local ARROW_HOTKEY: { Enum.KeyCode } = { Enum.KeyCode.Backquote, Enum.KeyCode.DPadUp } --TODO: Hookup '~' too?
 
 -- Hotbar slots
@@ -425,11 +425,12 @@ local function BuildCategoryBar(parentFrame)
 	CategoryFrame.Name = "CategoryBarScroll"
 	CategoryFrame.BackgroundTransparency = 1
 	CategoryFrame.Size = UDim2.new(1, 0, 0, CATEGORY_BAR_HEIGHT)
-	-- place it at the top inside InventoryFrame (so tabs are the first row of the inventory UI)
-	CategoryFrame.Position = UDim2.new(0, 0, 0, 0)
-	CategoryFrame.ScrollBarThickness = 8
+	CategoryFrame.Position = UDim2.new(0, 0, 0, 0) -- top inside parent
+	CategoryFrame.ScrollBarThickness = 0
 	CategoryFrame.ScrollBarImageColor3 = Color3.new(1, 1, 1)
 	CategoryFrame.Parent = parentFrame
+	CategoryFrame.ScrollBarImageTransparency = 1
+	CategoryFrame.ScrollingDirection = Enum.ScrollingDirection.X
 
 	-- Layout for horizontal tabs
 	local list = Instance.new("UIListLayout")
@@ -448,34 +449,72 @@ local function BuildCategoryBar(parentFrame)
 	pad.PaddingBottom = UDim.new(0, 4)
 	pad.Parent = CategoryFrame
 
+	-- Style constants for buttons
+	local BUTTON_BACKGROUND_COLOR = BACKGROUND_COLOR -- matches your UI
+	local BUTTON_HOVER_COLOR = Color3.new(35/255, 37/255, 39/255)
+	local BUTTON_TEXT_COLOR = TEXT_COLOR
+	local BUTTON_CORNER_RADIUS = UDim.new(0, 5)
+
 	-- Create one button per category
-	for _, cat in ipairs(Categories) do
+	for i, cat in ipairs(Categories) do
 		local btn = Instance.new("TextButton")
 		btn.Name = "Category_" .. tostring(cat):gsub("%s+", "_")
-		btn.AutoButtonColor = true
-		btn.BackgroundColor3 = BACKGROUND_COLOR
-		btn.Size = UDim2.new(0, 110, 1, -8) -- fixed width; height fills the category bar with small margin
+		btn.AutoButtonColor = false -- we handle hover manually
+		btn.BackgroundColor3 = BUTTON_BACKGROUND_COLOR
+		btn.Size = UDim2.new(0, 110, 1, -8) -- fixed width; height fills category bar minus padding
 		btn.Text = tostring(cat)
-		btn.Font = Enum.Font.SourceSans
+		btn.Font = Enum.Font.Cartoon
 		btn.TextSize = math.floor(FONT_SIZE * 0.9)
-		btn.TextColor3 = TEXT_COLOR
+		btn.TextColor3 = BUTTON_TEXT_COLOR
 		btn.Parent = CategoryFrame
+
+		-- Rounded corners
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = BUTTON_CORNER_RADIUS
+		corner.Parent = btn
 
 		-- Visual selected state
 		btn.BackgroundTransparency = (cat == CurrentCategory) and 0 or 0.6
 
+		-- Hover effect
+		btn.MouseEnter:Connect(function()
+			if cat ~= CurrentCategory then
+				btn.BackgroundColor3 = BUTTON_HOVER_COLOR
+				btn.BackgroundTransparency = 0
+			end
+		end)
+		btn.MouseLeave:Connect(function()
+			if cat ~= CurrentCategory then
+				btn.BackgroundColor3 = BUTTON_BACKGROUND_COLOR
+				btn.BackgroundTransparency = 0.6
+			end
+		end)
+
+		-- Click event: change category
 		btn.MouseButton1Click:Connect(function()
 			SetCategory(cat)
+
+			-- refresh buttons to update selected state
+			for _, child in ipairs(CategoryFrame:GetChildren()) do
+				if child:IsA("TextButton") then
+					child.BackgroundTransparency = (child.Text == cat) and 0 or 0.6
+				end
+			end
+
+			-- scroll to the left/top when switching tabs
+			ScrollingFrame.CanvasPosition = Vector2.new(0, 0)
 		end)
 	end
 
-	-- adjust canvas size so horizontal scrolling works when children exceed width
-	CategoryFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+	-- adjust canvas size for horizontal scrolling
+	local function updateCanvas()
 		CategoryFrame.CanvasSize = UDim2.new(0, list.AbsoluteContentSize.X + 16, 0, 0)
-	end)
-	-- run once now in case the frame is already sized
-	CategoryFrame.CanvasSize = UDim2.new(0, list.AbsoluteContentSize.X + 16, 0, 0)
+	end
+
+	CategoryFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateCanvas)
+	updateCanvas()
 end
+
 local function Clamp(low: number, high: number, num: number): number
 	return math.min(high, math.max(low, num))
 end
@@ -1986,7 +2025,8 @@ do -- Search stuff
 		INVENTORY_HEADER_SIZE - (SEARCH_BUFFER_PIXELS * 2)
 	)
 	-- place inside InventoryFrame at the top-left with padding
-	SearchFrame.Position = UDim2.new(0, SEARCH_BUFFER_PIXELS, 0, SEARCH_BUFFER_PIXELS)
+	-- Move search bar above tabs with extra spacing
+	SearchFrame.Position = UDim2.new(0, SEARCH_BUFFER_PIXELS, 0, SEARCH_BUFFER_PIXELS - 40)
 	SearchFrame.Parent = InventoryFrame
 
 	local searchFrameCorner: UICorner = Instance.new("UICorner")
