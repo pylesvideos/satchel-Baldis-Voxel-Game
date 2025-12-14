@@ -1,22 +1,39 @@
-A fork of Satchel that includes tabs that can be toggled and are sorted by the tags of tools. It also moves the search bar to above the backpack UI and it disables tool dragging out of the hotbar.
+## Satchel (Baldi's Voxel Game fork)
 
-Differences to the original Scatchel:
-tabs
-moved search bar
-cannot drag tools from the hotbar
-changed font to cartoony
+Satchel is a modern, customizable replacement for Roblox's default backpack. This fork adds tabbed categories (driven by tool tags), moves the search bar above the inventory, restricts hotbar dragging, and includes an option to block specific tags from producing categories.
 
-Configuration: Blocked category tags
-----------------------------------
+## Features
+- Tabbed categories derived from tool tags
+- Search bar placed at the top of the inventory UI
+- Hotbar tools cannot be dragged out of the hotbar (only inventory → hotbar moves allowed)
+- Option to block tags from creating categories (`BlockedCategoryTags`)
+- Gamepad and VR-friendly behaviors preserved
 
-You can prevent certain tags from creating categories (or from being used as a tool's category) by setting the `BlockedCategoryTags` attribute on the `init` ModuleScript. It supports either:
+## Configuration
+### Blocked category tags
 
-- A comma-separated string, e.g. `"Tool,Admin,Hidden"` — this will block any tag named `Tool`, `Admin`, or `Hidden` (case-insensitive).
-- A table of strings, e.g. `{ "Tool", "Admin", "Hidden" }` — also case-insensitive.
+You can prevent certain tags from creating categories (or from being used as a tool's category) by setting the `BlockedCategoryTags` attribute on the `init` ModuleScript (`src/init.luau`). The attribute supports either:
 
-Example (ModuleScript attribute):
+- A comma-separated string (case-insensitive), e.g. `Tool,Admin,Hidden`
+- A Lua table of strings, e.g. `{ "Tool", "Admin", "Hidden" }`
 
-1. Open the `init` ModuleScript in Roblox Studio.
-2. Add an attribute named `BlockedCategoryTags` with value `Tool,Admin,Hidden` (string), or with a table value.
+Behavior:
+- When determining a tool's category, the script will skip any tags listed in `BlockedCategoryTags`.
+- Blocked categories will not be registered in the category bar.
 
-The script will skip blocked tags when determining a tool's category and will not register blocked categories in the category bar.
+Example (Roblox Studio):
+
+1. Open the `init` ModuleScript in Roblox Studio (the script in `src/init.luau`).
+2. Add an attribute named `BlockedCategoryTags` and set its value to either:
+	- A string: `Tool,Admin,Hidden`
+	- A table: `{ "Tool", "Admin", "Hidden" }`
+
+## Quick Notes
+- Hotbar dragging is intentionally restricted so hotbar slots remain fixed; to move tools into the hotbar you must drag them from the inventory.
+- The search fix keeps non-matching tools parented to the UI grid to avoid layout issues where items appear stuck in the top-right.
+
+## Contributing
+PRs, issues, and suggestions are welcome. Please follow the repo's contribution guidelines.
+
+## License
+See `LICENSE.md`.
