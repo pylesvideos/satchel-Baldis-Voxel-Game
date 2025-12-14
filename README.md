@@ -7,7 +7,6 @@ Satchel is a modern, customizable replacement for Roblox's default backpack. Thi
 - Search bar placed at the top of the inventory UI
 - Hotbar tools cannot be dragged out of the hotbar (only inventory → hotbar moves allowed)
 - Option to block tags from creating categories (`BlockedCategoryTags`)
-- Gamepad and VR-friendly behaviors preserved
 
 ## Configuration
 ### Blocked category tags
@@ -27,13 +26,3 @@ Example (Roblox Studio):
 2. Add an attribute named `BlockedCategoryTags` and set its value to either:
 	- A string: `Tool,Admin,Hidden`
 	- A table: `{ "Tool", "Admin", "Hidden" }`
-
-## Quick Notes
-- Hotbar dragging is intentionally restricted so hotbar slots remain fixed; to move tools into the hotbar you must drag them from the inventory.
-- The search fix keeps non-matching tools parented to the UI grid to avoid layout issues where items appear stuck in the top-right.
-
-## Contributing
-PRs, issues, and suggestions are welcome. Please follow the repo's contribution guidelines.
-
-## License
-See `LICENSE.md`.
