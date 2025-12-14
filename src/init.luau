@@ -117,7 +117,7 @@ local SEARCH_BORDER_THICKNESS: number = 1
 local SEARCH_TEXT_PLACEHOLDER: string = "Search"
 local SEARCH_TEXT_OFFSET: number = 8
 local SEARCH_TEXT: string = ""
-local SEARCH_CORNER_RADIUS: UDim = UDim.new(0, 3)
+local SEARCH_CORNER_RADIUS: UDim = UDim.new(0, 8)
 local SEARCH_IMAGE_X: string = "rbxasset://textures/ui/InspectMenu/x.png"
 local SEARCH_BUFFER_PIXELS: number = 5
 local SEARCH_WIDTH_PIXELS: number = 200
@@ -2368,7 +2368,7 @@ local function OnPreferredTransparencyChanged(): ()
 	end
 
 	SEARCH_BACKGROUND_TRANSPARENCY = SEARCH_BACKGROUND_TRANSPARENCY_DEFAULT * preferredTransparency
-	searchFrame.BackgroundTransparency = SEARCH_BACKGROUND_TRANSPARENCY
+	SearchFrame.BackgroundTransparency = SEARCH_BACKGROUND_TRANSPARENCY
 end
 GuiService:GetPropertyChangedSignal("PreferredTransparency"):Connect(OnPreferredTransparencyChanged)
 
