@@ -556,6 +556,10 @@ local function BuildCategoryBar(parentFrame)
 
 		-- Click event: change category
 		btn.MouseButton1Click:Connect(function()
+			-- Do not allow switching tabs while viewing search results
+			if ViewingSearchResults then
+				return
+			end
 			SetCategory(cat)
 
 			-- refresh buttons to update selected state
@@ -687,7 +691,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			if ToolTip and tool:IsA("Tool") then --NOTE: HopperBin
 				ToolTip.Text = tool.ToolTip
 				ToolTip.Size = UDim2.new(0, 0, 0, TOOLTIP_HEIGHT)
-				ToolTip.Position = UDim2.new(0.5, 0, 0, TOOLTIP_OFFSET)
+				ToolTip.Position = UDim2.new(0, 0, 0, TOOLTIP_OFFSET)
 			end
 		end
 		assignToolData()
@@ -965,48 +969,101 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 	slot.Frame.LayoutOrder = slot.Index
 
-	if index <= NumberOfHotbarSlots then -- Hotbar-Specific Slot Stuff
-		-- ToolTip stuff
-		ToolTip = Instance.new("TextLabel")
-		ToolTip.Name = "ToolTip"
-		ToolTip.Text = ""
-		ToolTip.Size = UDim2.new(1, 0, 1, 0)
-		ToolTip.TextColor3 = TEXT_COLOR
-		ToolTip.TextStrokeTransparency = TEXT_STROKE_TRANSPARENCY
-		ToolTip.TextStrokeColor3 = TEXT_STROKE_COLOR
-		ToolTip.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Medium, Enum.FontStyle.Normal)
-		ToolTip.TextSize = FONT_SIZE
-		ToolTip.ZIndex = 2
-		ToolTip.TextWrapped = false
-		ToolTip.TextYAlignment = Enum.TextYAlignment.Center
-		ToolTip.BackgroundColor3 = TOOLTIP_BACKGROUND_COLOR
-		ToolTip.BackgroundTransparency = SLOT_LOCKED_TRANSPARENCY
-		ToolTip.AnchorPoint = Vector2.new(0.5, 1)
-		ToolTip.BorderSizePixel = 0
-		ToolTip.Visible = false
-		ToolTip.AutomaticSize = Enum.AutomaticSize.X
-		ToolTip.Parent = SlotFrame
+	-- Create ToolTip for every slot so backpack slots show tooltips as well
+	ToolTip = Instance.new("TextLabel")
+	ToolTip.Name = "ToolTip"
+	ToolTip.Text = ""
+	ToolTip.Size = UDim2.new(1, 0, 1, 0)
+	ToolTip.TextColor3 = TEXT_COLOR
+	ToolTip.TextStrokeTransparency = TEXT_STROKE_TRANSPARENCY
+	ToolTip.TextStrokeColor3 = TEXT_STROKE_COLOR
+	ToolTip.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+	ToolTip.TextSize = FONT_SIZE
+	ToolTip.ZIndex = 2
+	ToolTip.TextWrapped = false
+	ToolTip.TextYAlignment = Enum.TextYAlignment.Center
+	ToolTip.BackgroundColor3 = TOOLTIP_BACKGROUND_COLOR
+	ToolTip.BackgroundTransparency = SLOT_LOCKED_TRANSPARENCY
+	ToolTip.AnchorPoint = Vector2.new(0, 0)
+	ToolTip.BorderSizePixel = 0
+	ToolTip.Visible = false
+	ToolTip.AutomaticSize = Enum.AutomaticSize.X
+	ToolTip.Parent = SlotFrame
 
-		local ToolTipCorner: UICorner = Instance.new("UICorner")
-		ToolTipCorner.Name = "Corner"
-		ToolTipCorner.CornerRadius = TOOLTIP_CORNER_RADIUS
-		ToolTipCorner.Parent = ToolTip
+	local ToolTipCorner: UICorner = Instance.new("UICorner")
+	ToolTipCorner.Name = "Corner"
+	ToolTipCorner.CornerRadius = TOOLTIP_CORNER_RADIUS
+	ToolTipCorner.Parent = ToolTip
 
-		local ToolTipPadding: UIPadding = Instance.new("UIPadding")
-		ToolTipPadding.PaddingLeft = UDim.new(0, TOOLTIP_PADDING)
-		ToolTipPadding.PaddingRight = UDim.new(0, TOOLTIP_PADDING)
-		ToolTipPadding.PaddingTop = UDim.new(0, TOOLTIP_PADDING)
-		ToolTipPadding.PaddingBottom = UDim.new(0, TOOLTIP_PADDING)
-		ToolTipPadding.Parent = ToolTip
-		SlotFrame.MouseEnter:Connect(function(): ()
-			if ToolTip.Text ~= "" then
-				ToolTip.Visible = true
+	local ToolTipPadding: UIPadding = Instance.new("UIPadding")
+	ToolTipPadding.PaddingLeft = UDim.new(0, TOOLTIP_PADDING)
+	ToolTipPadding.PaddingRight = UDim.new(0, TOOLTIP_PADDING)
+	ToolTipPadding.PaddingTop = UDim.new(0, TOOLTIP_PADDING)
+	ToolTipPadding.PaddingBottom = UDim.new(0, TOOLTIP_PADDING)
+	ToolTipPadding.Parent = ToolTip
+	local moveConn
+	local function showTooltip()
+		if ToolTip.Text == "" then
+			return
+		end
+		ToolTip.ZIndex = 10000
+		-- prefer a top-level gui so the tooltip appears above everything
+		local topParent = MainFrame and MainFrame.Parent or BackpackGui
+		-- if a ScreenGui is available, ensure tooltip is parented to it; otherwise use BackpackGui
+		if PlayerGui then
+			local sg = PlayerGui:FindFirstChild("SatchelTooltipGui")
+			if not sg then
+				sg = Instance.new("ScreenGui")
+				sg.Name = "SatchelTooltipGui"
+				sg.ResetOnSpawn = false
+				sg.DisplayOrder = 9999
+				sg.Parent = PlayerGui
+			end
+			ToolTip.Parent = sg
+		else
+			ToolTip.Parent = topParent
+		end
+		ToolTip.Visible = true
+		-- initial position
+		local ok, pos = pcall(function() return UserInputService:GetMouseLocation() end)
+		if not ok or not pos then
+			pos = Vector2.new(SlotFrame.AbsolutePosition.X + SlotFrame.AbsoluteSize.X / 2, SlotFrame.AbsolutePosition.Y)
+		end
+		local offsetX, offsetY = 5, 17
+		local screenW = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.X) or BackpackGui.AbsoluteSize.X or 800
+		local screenH = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y) or BackpackGui.AbsoluteSize.Y or 600
+		local tipSize = ToolTip.AbsoluteSize
+		local x = Clamp(0, math.max(0, screenW - tipSize.X), pos.X + offsetX)
+		local y = Clamp(0, math.max(0, screenH - tipSize.Y), pos.Y + offsetY)
+		ToolTip.Position = UDim2.new(0, math.floor(x), 0, math.floor(y))
+		-- follow mouse
+		moveConn = UserInputService.InputChanged:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+				local mx, my = input.Position.X, input.Position.Y
+				local tx = Clamp(0, math.max(0, screenW - tipSize.X), mx + offsetX)
+				local ty = Clamp(0, math.max(0, screenH - tipSize.Y), my + offsetY)
+				ToolTip.Position = UDim2.new(0, math.floor(tx), 0, math.floor(ty))
 			end
 		end)
-		SlotFrame.MouseLeave:Connect(function(): ()
-			ToolTip.Visible = false
-		end)
+	end
 
+	local function hideTooltip()
+		ToolTip.Visible = false
+		if moveConn then
+			moveConn:Disconnect()
+			moveConn = nil
+		end
+		pcall(function() ToolTip.Parent = SlotFrame end)
+	end
+
+	SlotFrame.MouseEnter:Connect(function(): ()
+		showTooltip()
+	end)
+	SlotFrame.MouseLeave:Connect(function(): ()
+		hideTooltip()
+	end)
+
+	if index <= NumberOfHotbarSlots then
 		function slot:MoveToInventory(): ...any
 			if slot.Index <= NumberOfHotbarSlots then -- From a Hotbar slot
 				local tool: any = slot.Tool
@@ -2219,6 +2276,8 @@ do -- Search stuff
 				slot.Frame.Visible = true
 			end
 			xButton.ZIndex = 0
+			-- Reset to default category when clearing search results
+			SetCategory(DEFAULT_CATEGORY)
 		end
 		UpdateScrollingFrameCanvasSize()
 	end
@@ -2250,6 +2309,7 @@ do -- Search stuff
 	end
 
 	xButton.MouseButton1Click:Connect(reset)
+	xImage.MouseButton1Click:Connect(reset)
 	searchBox.Changed:Connect(onChanged)
 	searchBox.FocusLost:Connect(focusLost)
 
@@ -2258,6 +2318,8 @@ do -- Search stuff
 
 		if not isNowOpen then
 			reset()
+			-- When closing inventory, switch back to the default first tab
+			SetCategory(DEFAULT_CATEGORY)
 		end
 	end)
 
