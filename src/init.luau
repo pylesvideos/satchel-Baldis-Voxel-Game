@@ -339,15 +339,53 @@ end
 
 -- Determine a category for a given tool
 local function DetermineToolCategory(tool: Instance): string
-	-- preference: explicit Attribute "Category"
-	if tool.GetAttribute and tool:GetAttribute("Category") then
-		return tostring(tool:GetAttribute("Category"))
+	-- Build a set of blocked tags from a ModuleScript attribute. The attribute
+	-- may be either a comma-separated string or a table of strings. Matching
+	-- is done case-insensitively.
+	local function parseBlockedTags()
+		local raw = nil
+		if targetScript and targetScript.GetAttribute then
+			raw = targetScript:GetAttribute("BlockedCategoryTags")
+		end
+		local set = {}
+		if raw then
+			if typeof(raw) == "string" then
+				for part in raw:gmatch("[^,]+") do
+					local t = part:gsub("^%s*(.-)%s*$", "%1"):lower()
+					if t ~= "" then
+						set[t] = true
+					end
+				end
+			elseif typeof(raw) == "table" then
+				for _, v in ipairs(raw) do
+					if typeof(v) == "string" then
+						set[v:lower()] = true
+					end
+				end
+			end
+		end
+		return set
 	end
 
-	-- fallback: check tags and use the first tag
+	local blocked = parseBlockedTags()
+
+	-- preference: explicit Attribute "Category" (respect blocked list)
+	if tool.GetAttribute and tool:GetAttribute("Category") then
+		local cat = tostring(tool:GetAttribute("Category"))
+		if cat and not blocked[cat:lower()] then
+			return cat
+		end
+	end
+
+	-- fallback: check tags and use the first non-blocked tag
 	local tags = CollectionService:GetTags(tool)
 	if tags and #tags > 0 then
-		return tostring(tags[1])
+		for _, t in ipairs(tags) do
+			local ts = tostring(t)
+			if ts and not blocked[ts:lower()] then
+				return ts
+			end
+		end
 	end
 
 	-- final fallback
@@ -359,6 +397,32 @@ local function RegisterCategory(cat: string)
 	if not cat or cat == "" then
 		return
 	end
+	-- Respect blocked tags when registering categories
+	local raw = nil
+	if targetScript and targetScript.GetAttribute then
+		raw = targetScript:GetAttribute("BlockedCategoryTags")
+	end
+	if raw then
+		local blockedSet = {}
+		if typeof(raw) == "string" then
+			for part in raw:gmatch("[^,]+") do
+				local t = part:gsub("^%s*(.-)%s*$", "%1"):lower()
+				if t ~= "" then
+					blockedSet[t] = true
+				end
+			end
+		elseif typeof(raw) == "table" then
+			for _, v in ipairs(raw) do
+				if typeof(v) == "string" then
+					blockedSet[v:lower()] = true
+				end
+			end
+		end
+		if blockedSet[cat:lower()] then
+			return
+		end
+	end
+
 	for _, c in ipairs(Categories) do
 		if c == cat then
 			return
@@ -644,8 +708,11 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		local hotbarSlot: boolean = (self.Index <= NumberOfHotbarSlots)
 		local inventoryOpen: boolean = InventoryFrame.Visible
 
-		if (not hotbarSlot or inventoryOpen) and not UserInputService.VREnabled then
+		-- Only inventory slots are draggable. Hotbar slots cannot be dragged out.
+		if (not hotbarSlot) and not UserInputService.VREnabled then
 			SlotFrame.Draggable = true
+		else
+			SlotFrame.Draggable = false
 		end
 
 		self:UpdateEquipView()
@@ -775,10 +842,15 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 	function slot:SetClickability(on: boolean): ...any -- (Happens on open/close arrow)
 		if self.Tool then
+			-- Prevent making hotbar slots draggable even when inventory is opened
 			if UserInputService.VREnabled then
 				SlotFrame.Draggable = false
 			else
-				SlotFrame.Draggable = not on
+				if self.Index and self.Index <= NumberOfHotbarSlots then
+					SlotFrame.Draggable = false
+				else
+					SlotFrame.Draggable = not on
+				end
 			end
 			UpdateSlotFading()
 		end
@@ -1055,12 +1127,11 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 				return
 			end
 
-			-- Check where we were dropped
+			-- Check where we were dropped. Do NOT allow hotbar slots to be moved into the
+			-- inventory; only inventory slots may be rearranged or moved into hotbar.
 			if CheckBounds(InventoryFrame, x, y) then
-				if slot.Index <= NumberOfHotbarSlots then
-					slot:MoveToInventory()
-				end
-				-- Check for double clicking on an inventory slot, to move into empty hotbar slot
+				-- Only inventory slots can be dropped into the inventory area (double-click
+				-- behavior handled below). Ignore drops for hotbar-origin slots.
 				if slot.Index > NumberOfHotbarSlots and now - lastUpTime < DOUBLE_CLICK_TIME then
 					if LowestEmptySlot then
 						local myTool: any = slot.Tool
@@ -1093,7 +1164,8 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 							-- Also hide the inventory slot if we're showing results right now
 							if ViewingSearchResults then
 								slot.Frame.Visible = false
-								slot.Frame.Parent = InventoryFrame
+								slot.Frame.Parent = UIGridFrame
+								slot.Frame.LayoutOrder = slot.Index
 							end
 						end
 					end
@@ -1104,9 +1176,8 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 				-- tool.Parent = workspace
 				-- --TODO: Move away from character
 				-- end
-				if slot.Index <= NumberOfHotbarSlots then
-					slot:MoveToInventory() --NOTE: Temporary
-				end
+				-- Don't auto-move hotbar slots into the inventory when dropping outside.
+				-- Inventory moves should only be initiated by dragging inventory slots.
 			end
 
 			lastUpTime = now
@@ -2109,8 +2180,11 @@ do -- Search stuff
 			local slot = Slots[i]
 			local hits: any = slot:CheckTerms(terms)
 			table.insert(hitTable, { slot, hits })
+			-- Keep hidden slots parented to the UI grid (so they stay in the layout
+			-- and don't end up positioned absolutely in the Inventory frame).
 			slot.Frame.Visible = false
-			slot.Frame.Parent = InventoryFrame
+			slot.Frame.Parent = UIGridFrame
+			slot.Frame.LayoutOrder = slot.Index
 		end
 
 		table.sort(hitTable, function(left: any, right: any): boolean
