@@ -100,6 +100,7 @@ local INVENTORY_ROWS_VR: number = 3
 local INVENTORY_ROWS_MINI: number = 2
 local INVENTORY_HEADER_SIZE: number = 40
 local INVENTORY_ARROWS_BUFFER_VR: number = 40
+local CATEGORY_BAR_HEIGHT: number = 36
 
 -- Text
 local TEXT_COLOR: Color3 = targetScript:GetAttribute("TextColor3") or Color3.new(1, 1, 1)
@@ -411,44 +412,70 @@ local function SetCategory(cat: string)
 	end
 end
 
--- Build the category UI bar (call with BuildCategoryBar(InventoryFrame) once InventoryFrame exists)
+-- Build the category UI scroll bar (call with BuildCategoryBar(InventoryFrame) once InventoryFrame exists)
+-- Creates a horizontal ScrollingFrame containing category tab buttons. Tabs live inside InventoryFrame at the top.
 local function BuildCategoryBar(parentFrame)
 	if CategoryFrame then
 		CategoryFrame:Destroy()
 		CategoryFrame = nil
 	end
 
-	CategoryFrame = Instance.new("Frame")
-	CategoryFrame.Name = "CategoryBar"
-	CategoryFrame.Size = UDim2.new(1, 0, 0, 32)
+	-- CategoryFrame is a ScrollingFrame so tabs can overflow horizontally
+	CategoryFrame = Instance.new("ScrollingFrame")
+	CategoryFrame.Name = "CategoryBarScroll"
 	CategoryFrame.BackgroundTransparency = 1
+	CategoryFrame.Size = UDim2.new(1, 0, 0, CATEGORY_BAR_HEIGHT)
+	-- place it at the top inside InventoryFrame (so tabs are the first row of the inventory UI)
+	CategoryFrame.Position = UDim2.new(0, 0, 0, 0)
+	CategoryFrame.ScrollBarThickness = 8
+	CategoryFrame.ScrollBarImageColor3 = Color3.new(1, 1, 1)
 	CategoryFrame.Parent = parentFrame
-	CategoryFrame.Position = UDim2.new(0, 0, 0, 4) -- tweak as needed
 
-	local padding = 6
-	local xOffset = padding
+	-- Layout for horizontal tabs
+	local list = Instance.new("UIListLayout")
+	list.FillDirection = Enum.FillDirection.Horizontal
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 8)
+	list.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	list.VerticalAlignment = Enum.VerticalAlignment.Center
+	list.Parent = CategoryFrame
 
+	-- Small padding inside the scroll
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.PaddingTop = UDim.new(0, 4)
+	pad.PaddingBottom = UDim.new(0, 4)
+	pad.Parent = CategoryFrame
+
+	-- Create one button per category
 	for _, cat in ipairs(Categories) do
 		local btn = Instance.new("TextButton")
-		btn.Name = "Category_" .. cat:gsub("%s+", "_")
+		btn.Name = "Category_" .. tostring(cat):gsub("%s+", "_")
 		btn.AutoButtonColor = true
-		btn.BackgroundTransparency = (cat == CurrentCategory) and 0 or 0.6
 		btn.BackgroundColor3 = BACKGROUND_COLOR
-		btn.Position = UDim2.fromOffset(xOffset, 4)
-		btn.Size = UDim2.fromOffset(100, 24)
-		btn.Text = cat
+		btn.Size = UDim2.new(0, 110, 1, -8) -- fixed width; height fills the category bar with small margin
+		btn.Text = tostring(cat)
 		btn.Font = Enum.Font.SourceSans
-		btn.TextSize = 14
+		btn.TextSize = math.floor(FONT_SIZE * 0.9)
+		btn.TextColor3 = TEXT_COLOR
 		btn.Parent = CategoryFrame
+
+		-- Visual selected state
+		btn.BackgroundTransparency = (cat == CurrentCategory) and 0 or 0.6
 
 		btn.MouseButton1Click:Connect(function()
 			SetCategory(cat)
 		end)
-
-		xOffset = xOffset + btn.Size.X.Offset + padding
 	end
-end
 
+	-- adjust canvas size so horizontal scrolling works when children exceed width
+	CategoryFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		CategoryFrame.CanvasSize = UDim2.new(0, list.AbsoluteContentSize.X + 16, 0, 0)
+	end)
+	-- run once now in case the frame is already sized
+	CategoryFrame.CanvasSize = UDim2.new(0, list.AbsoluteContentSize.X + 16, 0, 0)
+end
 local function Clamp(low: number, high: number, num: number): number
 	return math.min(high, math.max(low, num))
 end
@@ -1120,14 +1147,9 @@ local function OnChildAdded(child: Instance): () -- To Character or Backpack
 		slot.Category = DetermineToolCategory(tool)
 		RegisterCategory(slot.Category)
 
-		-- If category bar isn't built yet but InventoryFrame exists, build it lazily
-		if not CategoryFrame and InventoryFrame then
-			BuildCategoryBar(InventoryFrame)
-		end
-
-		-- If new category was added, we should rebuild the bar to include it (simple approach)
-		-- (build only if CategoryFrame exists so we don't create it prematurely)
-		if CategoryFrame then
+		-- If InventoryFrame exists, ensure category bar is present and up-to-date
+		if InventoryFrame then
+			-- Build or rebuild to pick up any newly-registered categories.
 			BuildCategoryBar(InventoryFrame)
 		end
 
@@ -1948,31 +1970,40 @@ local function resizeGamepadHintsFrame(): ()
 	end
 end
 
-local searchFrame: Frame = Instance.new("Frame")
+-- Search UI: full width (matches InventoryFrame width) and positioned at the top of InventoryFrame.
+-- Uses `SearchFrame` (global-like name) so other helpers (e.g. BuildCategoryBar) can find/reparent it.
+SearchFrame = Instance.new("Frame")
 do -- Search stuff
-	searchFrame.Name = "Search"
-	searchFrame.BackgroundColor3 = SEARCH_BACKGROUND_COLOR
-	searchFrame.BackgroundTransparency = SEARCH_BACKGROUND_TRANSPARENCY
-	searchFrame.Size = UDim2.new(
-		0,
-		SEARCH_WIDTH_PIXELS - (SEARCH_BUFFER_PIXELS * 2),
+	SearchFrame.Name = "Search"
+	SearchFrame.BackgroundColor3 = SEARCH_BACKGROUND_COLOR
+	SearchFrame.BackgroundTransparency = SEARCH_BACKGROUND_TRANSPARENCY
+
+	-- Make the search frame full width of the inventory minus horizontal buffer
+	SearchFrame.Size = UDim2.new(
+		1,
+		- (SEARCH_BUFFER_PIXELS * 2),
 		0,
 		INVENTORY_HEADER_SIZE - (SEARCH_BUFFER_PIXELS * 2)
 	)
-	searchFrame.Position = UDim2.new(1, -searchFrame.Size.X.Offset - SEARCH_BUFFER_PIXELS, 0, SEARCH_BUFFER_PIXELS)
-	searchFrame.Parent = InventoryFrame
+	-- place inside InventoryFrame at the top-left with padding
+	SearchFrame.Position = UDim2.new(0, SEARCH_BUFFER_PIXELS, 0, SEARCH_BUFFER_PIXELS)
+	SearchFrame.Parent = InventoryFrame
 
 	local searchFrameCorner: UICorner = Instance.new("UICorner")
 	searchFrameCorner.Name = "Corner"
 	searchFrameCorner.CornerRadius = SEARCH_CORNER_RADIUS
-	searchFrameCorner.Parent = searchFrame
+	searchFrameCorner.Parent = SearchFrame
 
 	local searchFrameBorder: UIStroke = Instance.new("UIStroke")
 	searchFrameBorder.Name = "Border"
 	searchFrameBorder.Color = SEARCH_BORDER_COLOR
 	searchFrameBorder.Thickness = SEARCH_BORDER_THICKNESS
 	searchFrameBorder.Transparency = SEARCH_BORDER_TRANSPARENCY
-	searchFrameBorder.Parent = searchFrame
+	searchFrameBorder.Parent = SearchFrame
+
+	-- Text box fills most of the width, leaving room for the clear button on the right
+	local textBoxHorizontalInset = SEARCH_TEXT_OFFSET
+	local clearButtonWidth = 30
 
 	local searchBox: TextBox = Instance.new("TextBox")
 	searchBox.BackgroundTransparency = 1
@@ -1983,51 +2014,50 @@ do -- Search stuff
 	searchBox.TextStrokeColor3 = TEXT_STROKE_COLOR
 	searchBox.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Medium, Enum.FontStyle.Normal)
 	searchBox.PlaceholderText = SEARCH_TEXT_PLACEHOLDER
-	searchBox.TextColor3 = TEXT_COLOR
-	searchBox.TextTransparency = TEXT_STROKE_TRANSPARENCY
-	searchBox.TextStrokeColor3 = TEXT_STROKE_COLOR
 	searchBox.ClearTextOnFocus = false
 	searchBox.TextTruncate = Enum.TextTruncate.AtEnd
 	searchBox.TextSize = FONT_SIZE
 	searchBox.TextXAlignment = Enum.TextXAlignment.Left
 	searchBox.TextYAlignment = Enum.TextYAlignment.Center
 	searchBox.Size = UDim2.new(
+		1,
+		- (textBoxHorizontalInset * 2) - clearButtonWidth,
 		0,
-		(SEARCH_WIDTH_PIXELS - (SEARCH_BUFFER_PIXELS * 2)) - (SEARCH_TEXT_OFFSET * 2) - 20,
-		0,
-		INVENTORY_HEADER_SIZE - (SEARCH_BUFFER_PIXELS * 2) - (SEARCH_TEXT_OFFSET * 2)
+		INVENTORY_HEADER_SIZE - (SEARCH_BUFFER_PIXELS * 2) - (textBoxHorizontalInset * 2)
 	)
 	searchBox.AnchorPoint = Vector2.new(0, 0.5)
-	searchBox.Position = UDim2.new(0, SEARCH_TEXT_OFFSET, 0.5, 0)
+	searchBox.Position = UDim2.new(0, textBoxHorizontalInset, 0.5, 0)
 	searchBox.ZIndex = 2
-	searchBox.Parent = searchFrame
+	searchBox.Parent = SearchFrame
 
 	local xButton: TextButton = Instance.new("TextButton")
 	xButton.Name = "X"
 	xButton.Text = ""
-	xButton.Size = UDim2.new(0, 30, 0, 30)
-	xButton.Position = UDim2.new(1, -xButton.Size.X.Offset, 0.5, -xButton.Size.Y.Offset / 2)
+	xButton.Size = UDim2.new(0, clearButtonWidth, 0, clearButtonWidth)
+	xButton.AnchorPoint = Vector2.new(1, 0.5)
+	xButton.Position = UDim2.new(1, -textBoxHorizontalInset, 0.5, 0)
 	xButton.ZIndex = 4
 	xButton.Visible = false
 	xButton.BackgroundTransparency = 1
-	xButton.Parent = searchFrame
+	xButton.Parent = SearchFrame
 
 	local xImage: ImageButton = Instance.new("ImageButton")
-	xImage.Name = "X"
+	xImage.Name = "XImage"
 	xImage.Image = SEARCH_IMAGE_X
 	xImage.BackgroundTransparency = 1
 	xImage.Size = UDim2.new(
 		0,
-		searchFrame.Size.Y.Offset - (SEARCH_BUFFER_PIXELS * 4),
+		clearButtonWidth - 8,
 		0,
-		searchFrame.Size.Y.Offset - (SEARCH_BUFFER_PIXELS * 4)
+		clearButtonWidth - 8
 	)
 	xImage.AnchorPoint = Vector2.new(0.5, 0.5)
 	xImage.Position = UDim2.new(0.5, 0, 0.5, 0)
-	xImage.ZIndex = 1
+	xImage.ZIndex = 5
 	xImage.BorderSizePixel = 0
 	xImage.Parent = xButton
 
+	-- Search logic (keeps same behavior as original, but now uses the full-width SearchFrame)
 	local function search(): ()
 		local terms: { [string]: boolean } = {}
 		for word: string in searchBox.Text:gmatch("%S+") do
@@ -2122,11 +2152,12 @@ do -- Search stuff
 			reset()
 		end
 	end
+
 	local function detectGamepad(lastInputType: Enum.UserInputType): ()
 		if lastInputType == Enum.UserInputType.Gamepad1 and not UserInputService.VREnabled then
-			searchFrame.Visible = false
+			SearchFrame.Visible = false
 		else
-			searchFrame.Visible = true
+			SearchFrame.Visible = true
 		end
 	end
 	UserInputService.LastInputTypeChanged:Connect(detectGamepad)
