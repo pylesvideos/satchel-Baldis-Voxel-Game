@@ -83,7 +83,7 @@ local TOOLTIP_BACKGROUND_COLOR: Color3 = targetScript:GetAttribute("BackgroundCo
 local TOOLTIP_PADDING: number = 4
 local TOOLTIP_HEIGHT: number = 16
 local TOOLTIP_OFFSET: number = -5 -- From to
-
+local TOOLTIP_OFFSETX, TOOLTIP_OFFSETY = 7, 20
 -- Topbar icons
 local ARROW_IMAGE_OPEN: string = "rbxasset://textures/ui/TopBar/inventoryOn.png"
 local ARROW_IMAGE_CLOSE: string = "rbxasset://textures/ui/TopBar/inventoryOff.png"
@@ -1029,7 +1029,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		if not ok or not pos then
 			pos = Vector2.new(SlotFrame.AbsolutePosition.X + SlotFrame.AbsoluteSize.X / 2, SlotFrame.AbsolutePosition.Y)
 		end
-		local offsetX, offsetY = 5, 17
+		local offsetX, offsetY = TOOLTIP_OFFSETX, TOOLTIP_OFFSETY
 		local screenW = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.X) or BackpackGui.AbsoluteSize.X or 800
 		local screenH = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y) or BackpackGui.AbsoluteSize.Y or 600
 		local tipSize = ToolTip.AbsoluteSize
